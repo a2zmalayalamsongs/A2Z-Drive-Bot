@@ -55,9 +55,7 @@ drive = build(
 
 FOLDER_MIME = "application/vnd.google-apps.folder"
 
-MIN_YEAR = 1980
-MAX_YEAR = 2027
-
+# 10 YEAR FOLDERS PER PAGE
 YEARS_PER_PAGE = 10
 
 
@@ -82,7 +80,24 @@ def get_items(folder_id):
 
 
 # =========================================================
-# GET YEAR FOLDERS
+# GET ALL YEAR FOLDERS AUTOMATICALLY
+# =========================================================
+#
+# Any numeric folder name will be treated as a YEAR.
+#
+# Example:
+#
+# 2030
+# 2029
+# 2028
+# 2027
+# ...
+# 1980
+# 1979
+# 1978
+# ...
+#
+# No MIN_YEAR / MAX_YEAR limit.
 # =========================================================
 
 def get_year_folders():
@@ -99,23 +114,19 @@ def get_year_folders():
 
         name = item.get("name", "").strip()
 
-        # Only numeric folder names
+        # Folder name must contain only numbers
         if not name.isdigit():
             continue
 
         year = int(name)
 
-        # Only 1980 - 2027
-        if MIN_YEAR <= year <= MAX_YEAR:
-
-            years.append({
-                "id": item["id"],
-                "name": name,
-                "year": year
-            })
+        years.append({
+            "id": item["id"],
+            "name": name,
+            "year": year
+        })
 
     # =====================================================
-    # IMPORTANT:
     # NEWEST YEAR FIRST
     # =====================================================
 
@@ -128,32 +139,46 @@ def get_year_folders():
 
 
 # =========================================================
-# BUILD YEAR PAGE
+# BUILD YEAR KEYBOARD
+# 10 YEARS PER PAGE
 # =========================================================
 
 def build_year_keyboard(page=0):
 
+    # Get latest folders every time
     years = get_year_folders()
 
-    # Total pages
+    # =====================================================
+    # TOTAL PAGES
+    # =====================================================
+
     total_pages = max(
         1,
         (len(years) + YEARS_PER_PAGE - 1)
         // YEARS_PER_PAGE
     )
 
-    # Keep page valid
+    # =====================================================
+    # KEEP PAGE VALID
+    # =====================================================
+
     if page < 0:
         page = 0
 
     if page >= total_pages:
         page = total_pages - 1
 
-    # Start / end
+    # =====================================================
+    # PAGE START / END
+    # =====================================================
+
     start_index = page * YEARS_PER_PAGE
+
     end_index = start_index + YEARS_PER_PAGE
 
-    page_years = years[start_index:end_index]
+    page_years = years[
+        start_index:end_index
+    ]
 
     keyboard = []
 
@@ -289,7 +314,7 @@ async def page_callback(
 
 
 # =========================================================
-# OPEN YEAR / FOLDER
+# OPEN YEAR
 # =========================================================
 
 async def year_callback(
@@ -305,7 +330,7 @@ async def year_callback(
 
     folder_id = parts[1]
 
-    # Page from which year was opened
+    # Remember year page
     page = int(parts[2])
 
     items = get_items(folder_id)
@@ -328,15 +353,25 @@ async def year_callback(
             files.append(item)
 
     # =====================================================
-    # SORT
+    # SORT ALBUM FOLDERS
     # =====================================================
 
     folders.sort(
-        key=lambda x: x.get("name", "").lower()
+        key=lambda x: x.get(
+            "name",
+            ""
+        ).lower()
     )
 
+    # =====================================================
+    # SORT SONG FILES
+    # =====================================================
+
     files.sort(
-        key=lambda x: x.get("name", "").lower()
+        key=lambda x: x.get(
+            "name",
+            ""
+        ).lower()
     )
 
     keyboard = []
@@ -350,12 +385,14 @@ async def year_callback(
         keyboard.append([
             InlineKeyboardButton(
                 "📁 " + item["name"],
-                callback_data=f"folder:{item['id']}:{page}"
+                callback_data=(
+                    f"folder:{item['id']}:{page}"
+                )
             )
         ])
 
     # =====================================================
-    # FILES / SONGS
+    # SONG FILES
     # =====================================================
 
     for item in files:
@@ -363,12 +400,14 @@ async def year_callback(
         keyboard.append([
             InlineKeyboardButton(
                 "🎵 " + item["name"],
-                callback_data=f"file:{item['id']}"
+                callback_data=(
+                    f"file:{item['id']}"
+                )
             )
         ])
 
     # =====================================================
-    # BACK TO SAME YEAR PAGE
+    # BACK TO YEAR PAGE
     # =====================================================
 
     keyboard.append([
@@ -380,7 +419,9 @@ async def year_callback(
 
     await query.edit_message_text(
         "📂 Select:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        reply_markup=InlineKeyboardMarkup(
+            keyboard
+        )
     )
 
 
@@ -401,12 +442,17 @@ async def folder_callback(
 
     folder_id = parts[1]
 
+    # Original year page
     page = int(parts[2])
 
     items = get_items(folder_id)
 
     folders = []
     files = []
+
+    # =====================================================
+    # SEPARATE FOLDERS / FILES
+    # =====================================================
 
     for item in items:
 
@@ -418,12 +464,22 @@ async def folder_callback(
 
             files.append(item)
 
+    # =====================================================
+    # SORT
+    # =====================================================
+
     folders.sort(
-        key=lambda x: x.get("name", "").lower()
+        key=lambda x: x.get(
+            "name",
+            ""
+        ).lower()
     )
 
     files.sort(
-        key=lambda x: x.get("name", "").lower()
+        key=lambda x: x.get(
+            "name",
+            ""
+        ).lower()
     )
 
     keyboard = []
@@ -437,12 +493,14 @@ async def folder_callback(
         keyboard.append([
             InlineKeyboardButton(
                 "📁 " + item["name"],
-                callback_data=f"folder:{item['id']}:{page}"
+                callback_data=(
+                    f"folder:{item['id']}:{page}"
+                )
             )
         ])
 
     # =====================================================
-    # FILES
+    # FILES / SONGS
     # =====================================================
 
     for item in files:
@@ -450,12 +508,14 @@ async def folder_callback(
         keyboard.append([
             InlineKeyboardButton(
                 "🎵 " + item["name"],
-                callback_data=f"file:{item['id']}"
+                callback_data=(
+                    f"file:{item['id']}"
+                )
             )
         ])
 
     # =====================================================
-    # BACK
+    # BACK TO YEARS
     # =====================================================
 
     keyboard.append([
@@ -467,7 +527,9 @@ async def folder_callback(
 
     await query.edit_message_text(
         "📂 Select:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        reply_markup=InlineKeyboardMarkup(
+            keyboard
+        )
     )
 
 
@@ -486,7 +548,10 @@ async def file_callback(
         "⏳ Downloading..."
     )
 
-    file_id = query.data.split(":", 1)[1]
+    file_id = query.data.split(
+        ":",
+        1
+    )[1]
 
     temp_path = None
 
@@ -507,7 +572,7 @@ async def file_callback(
         )
 
         # =================================================
-        # DOWNLOAD FROM GOOGLE DRIVE
+        # DOWNLOAD
         # =================================================
 
         request = drive.files().get_media(
@@ -529,10 +594,12 @@ async def file_callback(
 
             while not done:
 
-                status, done = downloader.next_chunk()
+                status, done = (
+                    downloader.next_chunk()
+                )
 
         # =================================================
-        # SEND TO TELEGRAM
+        # SEND FILE TO TELEGRAM
         # =================================================
 
         with open(
@@ -555,16 +622,20 @@ async def file_callback(
 
     finally:
 
-        if temp_path and os.path.exists(temp_path):
+        if (
+            temp_path
+            and os.path.exists(temp_path)
+        ):
 
             try:
                 os.remove(temp_path)
-            except:
+
+            except Exception:
                 pass
 
 
 # =========================================================
-# NOTHING BUTTON
+# PAGE NUMBER BUTTON
 # =========================================================
 
 async def nothing_callback(
@@ -589,7 +660,7 @@ def main():
     )
 
     # =====================================================
-    # /start
+    # START
     # =====================================================
 
     app.add_handler(
@@ -600,7 +671,7 @@ def main():
     )
 
     # =====================================================
-    # PAGE BUTTONS
+    # YEAR PAGES
     # =====================================================
 
     app.add_handler(
@@ -611,7 +682,7 @@ def main():
     )
 
     # =====================================================
-    # YEAR BUTTONS
+    # YEAR
     # =====================================================
 
     app.add_handler(
@@ -622,7 +693,7 @@ def main():
     )
 
     # =====================================================
-    # FOLDER BUTTONS
+    # SUB FOLDER
     # =====================================================
 
     app.add_handler(
@@ -633,7 +704,7 @@ def main():
     )
 
     # =====================================================
-    # FILE BUTTONS
+    # FILE
     # =====================================================
 
     app.add_handler(
@@ -644,7 +715,7 @@ def main():
     )
 
     # =====================================================
-    # PAGE NUMBER BUTTON
+    # PAGE NUMBER
     # =====================================================
 
     app.add_handler(
@@ -654,13 +725,13 @@ def main():
         )
     )
 
+    # =====================================================
+    # START BOT
+    # =====================================================
+
     print(
         "A2Z Malayalam Songs Bot started..."
     )
-
-    # =====================================================
-    # START TELEGRAM POLLING
-    # =====================================================
 
     app.run_polling(
         drop_pending_updates=True
