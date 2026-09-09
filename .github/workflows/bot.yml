@@ -25,5 +25,6 @@ jobs:
       - name: Run Telegram Bot
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          ROOT_FOLDER_ID: ${{ secrets.ROOT_FOLDER_ID }}
         run: |
           python bot.py
