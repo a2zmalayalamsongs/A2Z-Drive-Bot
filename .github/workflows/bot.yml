@@ -2,6 +2,7 @@ name: Telegram Bot
 
 on:
   workflow_dispatch:
+
   schedule:
     - cron: "0 */5 * * *"
 
@@ -10,6 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -26,5 +28,6 @@ jobs:
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           ROOT_FOLDER_ID: ${{ secrets.ROOT_FOLDER_ID }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
         run: |
           python bot.py
