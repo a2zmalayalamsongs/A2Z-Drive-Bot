@@ -44,6 +44,7 @@ drive = build("drive", "v3", credentials=credentials)
 # =========================
 
 def get_items(folder_id):
+
     query = (
         f"'{folder_id}' in parents "
         "and trashed = false"
@@ -59,38 +60,177 @@ def get_items(folder_id):
 
 
 # =========================
-# START
+# YEAR PAGINATION
 # =========================
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+YEARS_PER_PAGE = 10
+
+
+def get_year_folders():
 
     items = get_items(ROOT_FOLDER_ID)
 
-    keyboard = []
+    folders = []
 
     for item in items:
 
         if item["mimeType"] == "application/vnd.google-apps.folder":
 
-            keyboard.append([
-                InlineKeyboardButton(
-                    "📁 " + item["name"],
-                    callback_data="folder:" + item["id"]
-                )
-            ])
+            name = item["name"].strip()
+
+            # Only numeric year folders
+            try:
+                year = int(name)
+
+                if 1980 <= year <= 2027:
+                    folders.append(item)
+
+            except ValueError:
+                pass
+
+    # Newest year first
+    folders.sort(
+        key=lambda x: int(x["name"].strip()),
+        reverse=True
+    )
+
+    return folders
+
+
+def build_year_keyboard(page=0):
+
+    folders = get_year_folders()
+
+    total_pages = (
+        (len(folders) + YEARS_PER_PAGE - 1)
+        // YEARS_PER_PAGE
+    )
+
+    if total_pages == 0:
+        return InlineKeyboardMarkup([])
+
+    # Safety
+    if page < 0:
+        page = 0
+
+    if page >= total_pages:
+        page = total_pages - 1
+
+    start_index = page * YEARS_PER_PAGE
+    end_index = start_index + YEARS_PER_PAGE
+
+    page_folders = folders[start_index:end_index]
+
+    keyboard = []
+
+    for item in page_folders:
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "📁 " + item["name"],
+                callback_data="folder:" + item["id"]
+            )
+        ])
+
+    # Pagination buttons
+    navigation = []
+
+    if page > 0:
+
+        navigation.append(
+            InlineKeyboardButton(
+                "⬅️ Back",
+                callback_data=f"yearpage:{page - 1}"
+            )
+        )
+
+    if page < total_pages - 1:
+
+        navigation.append(
+            InlineKeyboardButton(
+                "Next ➡️",
+                callback_data=f"yearpage:{page + 1}"
+            )
+        )
+
+    if navigation:
+        keyboard.append(navigation)
+
+    # Page number
+    keyboard.append([
+        InlineKeyboardButton(
+            f"📄 Page {page + 1}/{total_pages}",
+            callback_data="nop"
+        )
+    ])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+# =========================
+# START
+# =========================
+
+async def start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    keyboard = build_year_keyboard(0)
 
     await update.message.reply_text(
         "🎵 A2Z Malayalam Songs\n\n"
         "📂 Select a year:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        reply_markup=keyboard
     )
+
+
+# =========================
+# YEAR PAGINATION CALLBACK
+# =========================
+
+async def yearpage_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    query = update.callback_query
+    await query.answer()
+
+    page = int(
+        query.data.split(":", 1)[1]
+    )
+
+    keyboard = build_year_keyboard(page)
+
+    await query.edit_message_text(
+        "🎵 A2Z Malayalam Songs\n\n"
+        "📂 Select a year:",
+        reply_markup=keyboard
+    )
+
+
+# =========================
+# EMPTY BUTTON
+# =========================
+
+async def nop_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    query = update.callback_query
+    await query.answer()
 
 
 # =========================
 # FOLDER NAVIGATION
 # =========================
 
-async def folder_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def folder_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
     query = update.callback_query
     await query.answer()
@@ -140,10 +280,16 @@ async def folder_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # FILE DOWNLOAD
 # =========================
 
-async def file_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def file_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
     query = update.callback_query
-    await query.answer("Downloading...")
+
+    await query.answer(
+        "Downloading..."
+    )
 
     file_id = query.data.split(":", 1)[1]
 
@@ -154,9 +300,13 @@ async def file_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     file_name = file_info["name"]
 
-    request = drive.files().get_media(fileId=file_id)
+    request = drive.files().get_media(
+        fileId=file_id
+    )
 
-    with tempfile.NamedTemporaryFile(delete=False) as temp:
+    with tempfile.NamedTemporaryFile(
+        delete=False
+    ) as temp:
 
         temp_path = temp.name
 
@@ -168,11 +318,15 @@ async def file_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         done = False
 
         while not done:
+
             _, done = downloader.next_chunk()
 
     try:
 
-        with open(temp_path, "rb") as f:
+        with open(
+            temp_path,
+            "rb"
+        ) as f:
 
             await query.message.reply_document(
                 document=f,
@@ -189,30 +343,20 @@ async def file_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # HOME
 # =========================
 
-async def home_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def home_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
     query = update.callback_query
     await query.answer()
 
-    items = get_items(ROOT_FOLDER_ID)
-
-    keyboard = []
-
-    for item in items:
-
-        if item["mimeType"] == "application/vnd.google-apps.folder":
-
-            keyboard.append([
-                InlineKeyboardButton(
-                    "📁 " + item["name"],
-                    callback_data="folder:" + item["id"]
-                )
-            ])
+    keyboard = build_year_keyboard(0)
 
     await query.edit_message_text(
         "🎵 A2Z Malayalam Songs\n\n"
         "📂 Select a year:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        reply_markup=keyboard
     )
 
 
@@ -222,30 +366,58 @@ async def home_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
 
-    app = Application.builder().token(BOT_TOKEN).build()
-
-    app.add_handler(
-        CommandHandler("start", start)
+    app = (
+        Application
+        .builder()
+        .token(BOT_TOKEN)
+        .build()
     )
 
+    # /start
+    app.add_handler(
+        CommandHandler(
+            "start",
+            start
+        )
+    )
+
+    # Year pagination
+    app.add_handler(
+        CallbackQueryHandler(
+            yearpage_callback,
+            pattern=r"^yearpage:"
+        )
+    )
+
+    # Page number button
+    app.add_handler(
+        CallbackQueryHandler(
+            nop_callback,
+            pattern=r"^nop$"
+        )
+    )
+
+    # Folder
     app.add_handler(
         CallbackQueryHandler(
             folder_callback,
-            pattern="^folder:"
+            pattern=r"^folder:"
         )
     )
 
+    # File download
     app.add_handler(
         CallbackQueryHandler(
             file_callback,
-            pattern="^file:"
+            pattern=r"^file:"
         )
     )
 
+    # Home
     app.add_handler(
         CallbackQueryHandler(
             home_callback,
-            pattern="^home$"
+            pattern=r"^home$"
         )
     )
 
