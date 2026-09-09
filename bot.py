@@ -1,7 +1,7 @@
-
 import os
 import io
 import tempfile
+import json
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -21,7 +21,6 @@ from googleapiclient.http import MediaIoBaseDownload
 # =========================
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
-SERVICE_ACCOUNT_FILE = "service-account.json"
 
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
@@ -32,13 +31,17 @@ ROOT_FOLDER_ID = os.environ["ROOT_FOLDER_ID"]
 # GOOGLE DRIVE
 # =========================
 
-credentials = service_account.Credentials.from_service_account_file(
-    SERVICE_ACCOUNT_FILE,
+credentials = service_account.Credentials.from_service_account_info(
+    json.loads(os.environ["GOOGLE_CREDENTIALS"]),
     scopes=SCOPES
 )
 
 drive = build("drive", "v3", credentials=credentials)
 
+
+# =========================
+# GET ITEMS
+# =========================
 
 def get_items(folder_id):
     query = (
@@ -66,7 +69,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = []
 
     for item in items:
+
         if item["mimeType"] == "application/vnd.google-apps.folder":
+
             keyboard.append([
                 InlineKeyboardButton(
                     "📁 " + item["name"],
@@ -219,7 +224,9 @@ def main():
 
     app = Application.builder().token(BOT_TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
+    app.add_handler(
+        CommandHandler("start", start)
+    )
 
     app.add_handler(
         CallbackQueryHandler(
@@ -246,6 +253,10 @@ def main():
 
     app.run_polling()
 
+
+# =========================
+# RUN
+# =========================
 
 if __name__ == "__main__":
     main()
