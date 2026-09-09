@@ -1,5 +1,4 @@
 import os
-import io
 import tempfile
 import json
 
@@ -16,32 +15,34 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
 
-# =========================
+# =========================================================
 # SETTINGS
-# =========================
+# =========================================================
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 
-SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
-
 ROOT_FOLDER_ID = os.environ["ROOT_FOLDER_ID"]
 
+SCOPES = [
+    "https://www.googleapis.com/auth/drive.readonly"
+]
 
-# =========================
-# GOOGLE DRIVE
-# =========================
-
+# Google Service Account credentials
 credentials = service_account.Credentials.from_service_account_info(
     json.loads(os.environ["GOOGLE_CREDENTIALS"]),
     scopes=SCOPES
 )
 
-drive = build("drive", "v3", credentials=credentials)
+drive = build(
+    "drive",
+    "v3",
+    credentials=credentials
+)
 
 
-# =========================
-# GET ITEMS
-# =========================
+# =========================================================
+# GOOGLE DRIVE - GET ITEMS
+# =========================================================
 
 def get_items(folder_id):
 
@@ -53,61 +54,66 @@ def get_items(folder_id):
     results = drive.files().list(
         q=query,
         fields="files(id,name,mimeType,size)",
-        orderBy="name"
+        pageSize=1000
     ).execute()
 
     return results.get("files", [])
 
 
-# =========================
-# YEAR PAGINATION
-# =========================
-
-YEARS_PER_PAGE = 10
-
+# =========================================================
+# GET YEAR FOLDERS
+# 1980 - 2027 ONLY
+# =========================================================
 
 def get_year_folders():
 
     items = get_items(ROOT_FOLDER_ID)
 
-    folders = []
+    years = []
 
     for item in items:
 
-        if item["mimeType"] == "application/vnd.google-apps.folder":
+        if item["mimeType"] != "application/vnd.google-apps.folder":
+            continue
 
-            name = item["name"].strip()
+        name = item["name"].strip()
 
-            # Only numeric year folders
-            try:
-                year = int(name)
+        if name.isdigit():
 
-                if 1980 <= year <= 2027:
-                    folders.append(item)
+            year = int(name)
 
-            except ValueError:
-                pass
+            if 1980 <= year <= 2027:
 
-    # Newest year first
-    folders.sort(
-        key=lambda x: int(x["name"].strip()),
+                years.append(item)
+
+    # NEW YEAR FIRST
+    years.sort(
+        key=lambda x: int(x["name"]),
         reverse=True
     )
 
-    return folders
+    return years
+
+
+# =========================================================
+# YEAR PAGINATION
+# 10 YEARS PER PAGE
+# =========================================================
+
+YEARS_PER_PAGE = 10
 
 
 def build_year_keyboard(page=0):
 
-    folders = get_year_folders()
+    years = get_year_folders()
 
     total_pages = (
-        (len(folders) + YEARS_PER_PAGE - 1)
+        (len(years) + YEARS_PER_PAGE - 1)
         // YEARS_PER_PAGE
     )
 
     if total_pages == 0:
-        return InlineKeyboardMarkup([])
+        total_pages = 1
 
     # Safety
     if page < 0:
@@ -116,31 +122,32 @@ def build_year_keyboard(page=0):
     if page >= total_pages:
         page = total_pages - 1
 
-    start_index = page * YEARS_PER_PAGE
-    end_index = start_index + YEARS_PER_PAGE
+    start = page * YEARS_PER_PAGE
+    end = start + YEARS_PER_PAGE
 
-    page_folders = folders[start_index:end_index]
+    page_years = years[start:end]
 
     keyboard = []
 
-    for item in page_folders:
+    # YEAR BUTTONS
+    for item in page_years:
 
         keyboard.append([
             InlineKeyboardButton(
                 "📁 " + item["name"],
-                callback_data="folder:" + item["id"]
+                callback_data=f"folder:{item['id']}:{page}"
             )
         ])
 
-    # Pagination buttons
+    # PAGINATION BUTTONS
     navigation = []
 
     if page > 0:
 
         navigation.append(
             InlineKeyboardButton(
-                "⬅️ Back",
-                callback_data=f"yearpage:{page - 1}"
+                "⬅️ Previous",
+                callback_data=f"years:{page - 1}"
             )
         )
 
@@ -149,27 +156,27 @@ def build_year_keyboard(page=0):
         navigation.append(
             InlineKeyboardButton(
                 "Next ➡️",
-                callback_data=f"yearpage:{page + 1}"
+                callback_data=f"years:{page + 1}"
             )
         )
 
     if navigation:
         keyboard.append(navigation)
 
-    # Page number
+    # PAGE NUMBER
     keyboard.append([
         InlineKeyboardButton(
             f"📄 Page {page + 1}/{total_pages}",
-            callback_data="nop"
+            callback_data="noop"
         )
     ])
 
-    return InlineKeyboardMarkup(keyboard)
+    return keyboard
 
 
-# =========================
+# =========================================================
 # START
-# =========================
+# =========================================================
 
 async def start(
     update: Update,
@@ -181,20 +188,21 @@ async def start(
     await update.message.reply_text(
         "🎵 A2Z Malayalam Songs\n\n"
         "📂 Select a year:",
-        reply_markup=keyboard
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 
-# =========================
+# =========================================================
 # YEAR PAGINATION CALLBACK
-# =========================
+# =========================================================
 
-async def yearpage_callback(
+async def years_callback(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
 
     query = update.callback_query
+
     await query.answer()
 
     page = int(
@@ -206,26 +214,27 @@ async def yearpage_callback(
     await query.edit_message_text(
         "🎵 A2Z Malayalam Songs\n\n"
         "📂 Select a year:",
-        reply_markup=keyboard
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 
-# =========================
-# EMPTY BUTTON
-# =========================
+# =========================================================
+# NO OP BUTTON
+# =========================================================
 
-async def nop_callback(
+async def noop_callback(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
 
     query = update.callback_query
+
     await query.answer()
 
 
-# =========================
-# FOLDER NAVIGATION
-# =========================
+# =========================================================
+# OPEN YEAR / FOLDER
+# =========================================================
 
 async def folder_callback(
     update: Update,
@@ -233,40 +242,79 @@ async def folder_callback(
 ):
 
     query = update.callback_query
+
     await query.answer()
 
-    folder_id = query.data.split(":", 1)[1]
+    data = query.data.split(":")
+
+    folder_id = data[1]
+
+    # Root year page from which this folder was opened
+    page = int(data[2])
 
     items = get_items(folder_id)
 
     keyboard = []
 
+    # -----------------------------------------------------
+    # FOLDERS FIRST
+    # -----------------------------------------------------
+
+    folders = []
+
+    files = []
+
     for item in items:
 
-        mime = item["mimeType"]
-
-        if mime == "application/vnd.google-apps.folder":
-
-            keyboard.append([
-                InlineKeyboardButton(
-                    "📁 " + item["name"],
-                    callback_data="folder:" + item["id"]
-                )
-            ])
+        if item["mimeType"] == "application/vnd.google-apps.folder":
+            folders.append(item)
 
         else:
+            files.append(item)
 
-            keyboard.append([
-                InlineKeyboardButton(
-                    "🎵 " + item["name"],
-                    callback_data="file:" + item["id"]
-                )
-            ])
+    # Alphabetical
+    folders.sort(
+        key=lambda x: x["name"].lower()
+    )
+
+    files.sort(
+        key=lambda x: x["name"].lower()
+    )
+
+    # -----------------------------------------------------
+    # ALBUM FOLDERS
+    # -----------------------------------------------------
+
+    for item in folders:
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "📁 " + item["name"],
+                callback_data=f"folder:{item['id']}:{page}"
+            )
+        ])
+
+    # -----------------------------------------------------
+    # SONG FILES
+    # -----------------------------------------------------
+
+    for item in files:
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "🎵 " + item["name"],
+                callback_data=f"file:{item['id']}"
+            )
+        ])
+
+    # -----------------------------------------------------
+    # BACK TO YEAR PAGE
+    # -----------------------------------------------------
 
     keyboard.append([
         InlineKeyboardButton(
-            "🔙 Back",
-            callback_data="home"
+            "🔙 Back to Years",
+            callback_data=f"years:{page}"
         )
     ])
 
@@ -276,9 +324,9 @@ async def folder_callback(
     )
 
 
-# =========================
+# =========================================================
 # FILE DOWNLOAD
-# =========================
+# =========================================================
 
 async def file_callback(
     update: Update,
@@ -288,60 +336,70 @@ async def file_callback(
     query = update.callback_query
 
     await query.answer(
-        "Downloading..."
+        "⏳ Downloading..."
     )
 
     file_id = query.data.split(":", 1)[1]
 
-    file_info = drive.files().get(
-        fileId=file_id,
-        fields="id,name,mimeType,size"
-    ).execute()
-
-    file_name = file_info["name"]
-
-    request = drive.files().get_media(
-        fileId=file_id
-    )
-
-    with tempfile.NamedTemporaryFile(
-        delete=False
-    ) as temp:
-
-        temp_path = temp.name
-
-        downloader = MediaIoBaseDownload(
-            temp,
-            request
-        )
-
-        done = False
-
-        while not done:
-
-            _, done = downloader.next_chunk()
-
     try:
 
-        with open(
-            temp_path,
-            "rb"
-        ) as f:
+        file_info = drive.files().get(
+            fileId=file_id,
+            fields="id,name,mimeType,size"
+        ).execute()
 
-            await query.message.reply_document(
-                document=f,
-                filename=file_name,
-                caption="🎵 " + file_name
+        file_name = file_info["name"]
+
+        request = drive.files().get_media(
+            fileId=file_id
+        )
+
+        with tempfile.NamedTemporaryFile(
+            delete=False
+        ) as temp:
+
+            temp_path = temp.name
+
+            downloader = MediaIoBaseDownload(
+                temp,
+                request
             )
 
-    finally:
+            done = False
 
-        os.remove(temp_path)
+            while not done:
+
+                status, done = downloader.next_chunk()
+
+        try:
+
+            with open(
+                temp_path,
+                "rb"
+            ) as f:
+
+                await query.message.reply_document(
+                    document=f,
+                    filename=file_name,
+                    caption="🎵 " + file_name
+                )
+
+        finally:
+
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+    except Exception as e:
+
+        await query.message.reply_text(
+            "❌ Download failed.\n\n"
+            f"Error: {e}"
+        )
 
 
-# =========================
-# HOME
-# =========================
+# =========================================================
+# BACK TO YEARS
+# =========================================================
 
 async def home_callback(
     update: Update,
@@ -349,20 +407,25 @@ async def home_callback(
 ):
 
     query = update.callback_query
+
     await query.answer()
 
-    keyboard = build_year_keyboard(0)
+    page = int(
+        query.data.split(":", 1)[1]
+    )
+
+    keyboard = build_year_keyboard(page)
 
     await query.edit_message_text(
         "🎵 A2Z Malayalam Songs\n\n"
         "📂 Select a year:",
-        reply_markup=keyboard
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 
-# =========================
+# =========================================================
 # MAIN
-# =========================
+# =========================================================
 
 def main():
 
@@ -384,16 +447,16 @@ def main():
     # Year pagination
     app.add_handler(
         CallbackQueryHandler(
-            yearpage_callback,
-            pattern=r"^yearpage:"
+            years_callback,
+            pattern=r"^years:\d+$"
         )
     )
 
-    # Page number button
+    # No-op
     app.add_handler(
         CallbackQueryHandler(
-            nop_callback,
-            pattern=r"^nop$"
+            noop_callback,
+            pattern=r"^noop$"
         )
     )
 
@@ -405,7 +468,7 @@ def main():
         )
     )
 
-    # File download
+    # File
     app.add_handler(
         CallbackQueryHandler(
             file_callback,
@@ -413,22 +476,25 @@ def main():
         )
     )
 
-    # Home
+    # Back
     app.add_handler(
         CallbackQueryHandler(
             home_callback,
-            pattern=r"^home$"
+            pattern=r"^home:\d+$"
         )
     )
 
-    print("Bot started...")
+    print("A2Z Malayalam Songs Bot started...")
 
-    app.run_polling()
+    # Keep bot running
+    app.run_polling(
+        drop_pending_updates=True
+    )
 
 
-# =========================
+# =========================================================
 # RUN
-# =========================
+# =========================================================
 
 if __name__ == "__main__":
     main()
