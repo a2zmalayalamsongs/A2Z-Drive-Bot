@@ -12,22 +12,42 @@ jobs:
 
     steps:
 
+      # ==========================================
+      # CHECKOUT
+      # ==========================================
+
       - name: Checkout
         uses: actions/checkout@v4
+
+
+      # ==========================================
+      # SETUP PYTHON
+      # ==========================================
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
+
+      # ==========================================
+      # INSTALL PACKAGES
+      # ==========================================
+
       - name: Install packages
         run: |
           pip install -r requirements.txt
+
+
+      # ==========================================
+      # RUN TELEGRAM BOT
+      # ==========================================
 
       - name: Run Telegram Bot
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           ROOT_FOLDER_ID: ${{ secrets.ROOT_FOLDER_ID }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT_ID }}
         run: |
           python bot.py
