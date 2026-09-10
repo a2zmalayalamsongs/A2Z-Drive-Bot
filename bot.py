@@ -2,6 +2,7 @@ import os
 import tempfile
 import json
 import html
+import re
 
 from telegram import (
     Update,
@@ -44,11 +45,15 @@ SCOPES = [
 # GOOGLE DRIVE LOGIN
 # =========================================================
 
-credentials = service_account.Credentials.from_service_account_info(
-    json.loads(
-        os.environ["GOOGLE_CREDENTIALS"]
-    ),
-    scopes=SCOPES
+credentials = (
+    service_account
+    .Credentials
+    .from_service_account_info(
+        json.loads(
+            os.environ["GOOGLE_CREDENTIALS"]
+        ),
+        scopes=SCOPES
+    )
 )
 
 drive = build(
@@ -76,9 +81,9 @@ IMAGE_EXTENSIONS = (
 )
 
 INFO_FILES = (
+    "info.txt",
     "album-info.txt",
-    "album info.txt",
-    "info.txt"
+    "album info.txt"
 )
 
 
@@ -96,8 +101,13 @@ def get_items(folder_id):
     response = drive.files().list(
         q=query,
         fields=(
-            "files(id,name,mimeType,size,"
-            "modifiedTime)"
+            "files("
+            "id,"
+            "name,"
+            "mimeType,"
+            "size,"
+            "modifiedTime"
+            ")"
         ),
         pageSize=1000
     ).execute()
@@ -156,6 +166,7 @@ def get_year_folders():
             ""
         ).strip()
 
+        # Any numeric folder = year
         if not name.isdigit():
 
             continue
@@ -166,6 +177,7 @@ def get_year_folders():
             "year": int(name)
         })
 
+    # NEWEST → OLDEST
     years.sort(
         key=lambda x: x["year"],
         reverse=True
@@ -176,8 +188,7 @@ def get_year_folders():
 
 # =========================================================
 # YEAR KEYBOARD
-#
-# 2 × 5
+# 2 COLUMNS × 5 ROWS
 # =========================================================
 
 def build_year_keyboard(page=0):
@@ -194,13 +205,11 @@ def build_year_keyboard(page=0):
         // YEARS_PER_PAGE
     )
 
-    page = max(
-        0,
-        min(
-            page,
-            total_pages - 1
-        )
-    )
+    if page < 0:
+        page = 0
+
+    if page >= total_pages:
+        page = total_pages - 1
 
     start = (
         page
@@ -243,6 +252,7 @@ def build_year_keyboard(page=0):
 
         keyboard.append(row)
 
+    # NAVIGATION
     navigation = []
 
     if page > 0:
@@ -273,6 +283,7 @@ def build_year_keyboard(page=0):
             navigation
         )
 
+    # PAGE NUMBER
     keyboard.append([
         InlineKeyboardButton(
             f"📄 Page {page + 1} / {total_pages}",
@@ -316,6 +327,10 @@ async def start(
 ):
 
     context.user_data[
+        "search_mode"
+    ] = False
+
+    context.user_data[
         "request_mode"
     ] = False
 
@@ -336,12 +351,12 @@ async def help_command(
 
     text = (
         "🎵 <b>A2Z Malayalam Songs</b>\n\n"
-        "📂 Browse Songs: /start\n"
-        "🔍 Search Songs: /search\n"
-        "🆕 Latest Songs: /latest\n"
-        "📩 Request a Song: /request\n"
-        "ℹ️ About: /about\n"
-        "❓ Help: /help"
+        "📂 Browse Songs : /start\n"
+        "🔍 Search Songs : /search\n"
+        "🆕 Latest Songs : /latest\n"
+        "📩 Request a Song : /request\n"
+        "ℹ️ About : /about\n"
+        "❓ Help : /help"
     )
 
     await update.message.reply_text(
@@ -368,7 +383,7 @@ async def about_command(
         "🎵 Music Information\n"
         "🎬 Director Information\n"
         "👥 Artist Information\n\n"
-        "📩 Use /request to request a song."
+        "📩 Song request ചെയ്യാൻ /request ഉപയോഗിക്കുക."
     )
 
     await update.message.reply_text(
@@ -378,7 +393,239 @@ async def about_command(
 
 
 # =========================================================
-# REQUEST
+# SEARCH COMMAND
+# =========================================================
+
+async def search_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    context.user_data[
+        "search_mode"
+    ] = True
+
+    context.user_data[
+        "request_mode"
+    ] = False
+
+    # /search Varnajaalam
+    if context.args:
+
+        search_text = " ".join(
+            context.args
+        )
+
+        context.user_data[
+            "search_mode"
+        ] = False
+
+        await perform_search(
+            update.message,
+            search_text
+        )
+
+        return
+
+    await update.message.reply_text(
+        "🔍 <b>Search Songs</b>\n\n"
+        "🎬 Movie / Song name type ചെയ്ത് അയക്കൂ.\n\n"
+        "ഉദാഹരണം:\n"
+        "<code>Varnajaalam</code>",
+        parse_mode="HTML"
+    )
+
+
+# =========================================================
+# SEARCH DRIVE
+# =========================================================
+
+def search_drive(
+    folder_id,
+    search_text,
+    results,
+    limit=30
+):
+
+    if len(results) >= limit:
+
+        return
+
+    try:
+
+        items = get_items(
+            folder_id
+        )
+
+        search_lower = (
+            search_text.lower()
+        )
+
+        for item in items:
+
+            name = item.get(
+                "name",
+                ""
+            )
+
+            mime = item.get(
+                "mimeType"
+            )
+
+            # Do not search info/poster
+            lower_name = name.lower()
+
+            if (
+                lower_name
+                not in INFO_FILES
+                and not lower_name.endswith(
+                    IMAGE_EXTENSIONS
+                )
+                and search_lower
+                in lower_name
+            ):
+
+                results.append(item)
+
+                if len(results) >= limit:
+
+                    return
+
+            # Search inside folders
+            if mime == FOLDER_MIME:
+
+                search_drive(
+                    item["id"],
+                    search_text,
+                    results,
+                    limit
+                )
+
+                if len(results) >= limit:
+
+                    return
+
+    except Exception as e:
+
+        print(
+            "SEARCH DRIVE ERROR:",
+            repr(e)
+        )
+
+
+# =========================================================
+# PERFORM SEARCH
+# =========================================================
+
+async def perform_search(
+    message,
+    search_text
+):
+
+    results = []
+
+    try:
+
+        await message.reply_text(
+            "🔍 <b>Searching...</b>\n\n"
+            "Please wait ⏳",
+            parse_mode="HTML"
+        )
+
+        search_drive(
+            ROOT_FOLDER_ID,
+            search_text,
+            results,
+            30
+        )
+
+        if not results:
+
+            await message.reply_text(
+                "❌ <b>No results found</b>\n\n"
+                "🔍 Search: <b>"
+                + html.escape(
+                    search_text
+                )
+                + "</b>",
+                parse_mode="HTML"
+            )
+
+            return
+
+        keyboard = []
+
+        for item in results:
+
+            name = item.get(
+                "name",
+                "Song"
+            )
+
+            mime = item.get(
+                "mimeType"
+            )
+
+            if mime == FOLDER_MIME:
+
+                keyboard.append([
+                    InlineKeyboardButton(
+                        "📁 " + name,
+                        callback_data=(
+                            f"album:"
+                            f"{item['id']}:0"
+                        )
+                    )
+                ])
+
+            else:
+
+                keyboard.append([
+                    InlineKeyboardButton(
+                        "🎵 "
+                        + name
+                        + " ⬇️",
+                        callback_data=(
+                            f"file:"
+                            f"{item['id']}"
+                        )
+                    )
+                ])
+
+        await message.reply_text(
+            "🔍 <b>Search Results</b>\n\n"
+            "Search: <b>"
+            + html.escape(
+                search_text
+            )
+            + "</b>\n\n"
+            "Found: <b>"
+            + str(len(results))
+            + "</b>",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(
+                keyboard
+            )
+        )
+
+    except Exception as e:
+
+        print(
+            "SEARCH ERROR:",
+            repr(e)
+        )
+
+        await message.reply_text(
+            "❌ <b>Search failed</b>\n\n"
+            + html.escape(
+                str(e)
+            ),
+            parse_mode="HTML"
+        )
+
+
+# =========================================================
+# REQUEST COMMAND
 # =========================================================
 
 async def request_command(
@@ -390,35 +637,27 @@ async def request_command(
         "request_mode"
     ] = True
 
+    context.user_data[
+        "search_mode"
+    ] = False
+
     await update.message.reply_text(
         "📩 <b>Song Request</b>\n\n"
-        "🎬 Movie / Song name അയക്കൂ.\n"
-        "ഞങ്ങൾ request പരിശോധിക്കാം. ❤️",
+        "🎬 Movie / Song name type ചെയ്ത് അയക്കൂ.\n\n"
+        "ഉദാഹരണം:\n"
+        "<code>Manjummel Boys movie songs വേണം</code>",
         parse_mode="HTML"
     )
 
 
 # =========================================================
-# HANDLE REQUEST MESSAGE
+# SEND REQUEST TO ADMIN
 # =========================================================
 
-async def request_message(
+async def send_request_to_admin(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-
-    if not context.user_data.get(
-        "request_mode",
-        False
-    ):
-
-        return
-
-    context.user_data[
-        "request_mode"
-    ] = False
-
-    user = update.effective_user
 
     request_text = (
         update.message.text
@@ -428,75 +667,139 @@ async def request_message(
     if not request_text:
 
         await update.message.reply_text(
-            "❌ Text ആയി request അയക്കൂ."
+            "❌ Request text അയക്കൂ."
         )
 
         return
 
-    username = (
-        f"@{user.username}"
-        if user.username
-        else "No username"
-    )
+    user = update.effective_user
 
     first_name = (
         user.first_name
         or "Unknown"
     )
 
-    # =====================================================
-    # ADMIN MESSAGE
-    # =====================================================
+    username = (
+        "@"
+        + user.username
+        if user.username
+        else "No username"
+    )
 
     admin_text = (
         "📩 <b>NEW SONG REQUEST</b>\n\n"
-
         "👤 <b>User:</b> "
         + html.escape(
             first_name
         )
         + "\n"
-
         "🔗 <b>Username:</b> "
         + html.escape(
             username
         )
         + "\n"
-
         "🆔 <b>User ID:</b> "
         + str(user.id)
         + "\n\n"
-
         "🎬 <b>Request:</b>\n"
         + html.escape(
             request_text
         )
         + "\n\n"
-
-        "↩️ <b>ഈ message-ന് Reply ചെയ്താൽ "
-        "reply user-ന് അയക്കും.</b>"
+        "↩️ <i>ഈ message-ന് Reply ചെയ്താൽ "
+        "user-ന് reply പോകും.</i>"
     )
 
-    await context.bot.send_message(
-        chat_id=ADMIN_CHAT_ID,
-        text=admin_text,
-        parse_mode="HTML"
-    )
+    try:
 
-    # =====================================================
-    # USER CONFIRMATION
-    # =====================================================
+        await context.bot.send_message(
+            chat_id=ADMIN_CHAT_ID,
+            text=admin_text,
+            parse_mode="HTML"
+        )
 
-    await update.message.reply_text(
-        "✅ <b>Request അയച്ചു.</b>\n\n"
-        "📩 നിങ്ങളുടെ request ലഭിച്ചു.\n"
-        "Admin പരിശോധിച്ച് reply നൽകും. ❤️",
-        parse_mode="HTML"
-    )
+        await update.message.reply_text(
+            "✅ <b>Request അയച്ചു.</b>\n\n"
+            "📩 Admin-ന് നിങ്ങളുടെ request ലഭിച്ചു.\n"
+            "Reply ലഭിക്കുമ്പോൾ ഇവിടെ അറിയിക്കും. ❤️",
+            parse_mode="HTML"
+        )
+
+    except Exception as e:
+
+        print(
+            "REQUEST ERROR:",
+            repr(e)
+        )
+
+        await update.message.reply_text(
+            "❌ Request അയക്കാൻ കഴിഞ്ഞില്ല.\n\n"
+            + html.escape(
+                str(e)
+            ),
+            parse_mode="HTML"
+        )
 
 
 # =========================================================
-# ADMIN REPLY SYSTEM
+# SEARCH + REQUEST TEXT HANDLER
+# =========================================================
+
+async def text_message_handler(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    # SEARCH MODE
+    if context.user_data.get(
+        "search_mode",
+        False
+    ):
+
+        context.user_data[
+            "search_mode"
+        ] = False
+
+        search_text = (
+            update.message.text
+            or ""
+        ).strip()
+
+        if not search_text:
+
+            await update.message.reply_text(
+                "❌ Search text അയക്കൂ."
+            )
+
+            return
+
+        await perform_search(
+            update.message,
+            search_text
+        )
+
+        return
+
+    # REQUEST MODE
+    if context.user_data.get(
+        "request_mode",
+        False
+    ):
+
+        context.user_data[
+            "request_mode"
+        ] = False
+
+        await send_request_to_admin(
+            update,
+            context
+        )
+
+        return
+
+
+# =========================================================
+# ADMIN REPLY → USER
 # =========================================================
 
 async def admin_reply_handler(
@@ -510,71 +813,48 @@ async def admin_reply_handler(
 
         return
 
-    # Only Admin
+    # ONLY ADMIN
     if message.chat_id != ADMIN_CHAT_ID:
 
         return
 
-    # Must be a reply
+    # MUST BE REPLY
     if not message.reply_to_message:
 
         return
 
-    replied_message = (
-        message.reply_to_message
-    )
-
-    original_text = (
-        replied_message.text
-        or replied_message.caption
+    original_message = (
+        message.reply_to_message.text
+        or message.reply_to_message.caption
         or ""
     )
 
-    marker = "🆔 <b>User ID:</b>"
+    # =====================================================
+    # FIND USER ID
+    # =====================================================
 
-    if marker not in original_text:
+    match = re.search(
+        r"User ID:\s*(\d+)",
+        original_message
+    )
 
-        return
+    if not match:
 
-    try:
-
-        after_marker = (
-            original_text.split(
-                marker,
-                1
-            )[1]
-        )
-
-        user_id_text = (
-            after_marker
-            .split("\n", 1)[0]
-            .strip()
-        )
-
-        user_id = int(
-            user_id_text
-        )
-
-    except Exception as e:
-
-        print(
-            "ADMIN USER ID ERROR:",
-            e
+        await message.reply_text(
+            "❌ User ID കണ്ടെത്താൻ കഴിഞ്ഞില്ല."
         )
 
         return
 
-    # =====================================================
-    # ADMIN REPLY TEXT
-    # =====================================================
-
-    reply_text = (
-        message.text
-        or message.caption
-        or ""
+    user_id = int(
+        match.group(1)
     )
 
-    if reply_text:
+    # =====================================================
+    # TEXT REPLY
+    # =====================================================
+
+    if message.text:
 
         try:
 
@@ -583,7 +863,7 @@ async def admin_reply_handler(
                 text=(
                     "📩 <b>Admin Reply</b>\n\n"
                     + html.escape(
-                        reply_text
+                        message.text
                     )
                 ),
                 parse_mode="HTML"
@@ -595,9 +875,17 @@ async def admin_reply_handler(
 
         except Exception as e:
 
+            print(
+                "ADMIN TEXT REPLY ERROR:",
+                repr(e)
+            )
+
             await message.reply_text(
-                "❌ Reply അയക്കാൻ കഴിഞ്ഞില്ല.\n\n"
-                + str(e)
+                "❌ User-ന് reply അയക്കാൻ കഴിഞ്ഞില്ല.\n\n"
+                + html.escape(
+                    str(e)
+                ),
+                parse_mode="HTML"
             )
 
         return
@@ -613,19 +901,7 @@ async def admin_reply_handler(
             await context.bot.send_photo(
                 chat_id=user_id,
                 photo=message.photo[-1].file_id,
-                caption=(
-                    "📩 <b>Admin Reply</b>"
-                    + (
-                        "\n\n"
-                        + html.escape(
-                            message.caption
-                            or ""
-                        )
-                        if message.caption
-                        else ""
-                    )
-                ),
-                parse_mode="HTML"
+                caption="📩 Admin Reply"
             )
 
             await message.reply_text(
@@ -636,12 +912,49 @@ async def admin_reply_handler(
 
             await message.reply_text(
                 "❌ Photo അയക്കാൻ കഴിഞ്ഞില്ല.\n\n"
-                + str(e)
+                + html.escape(
+                    str(e)
+                )
             )
+
+        return
+
+    # =====================================================
+    # DOCUMENT REPLY
+    # =====================================================
+
+    if message.document:
+
+        try:
+
+            await context.bot.send_document(
+                chat_id=user_id,
+                document=message.document.file_id,
+                caption="📩 Admin Reply"
+            )
+
+            await message.reply_text(
+                "✅ File user-ന് അയച്ചു."
+            )
+
+        except Exception as e:
+
+            await message.reply_text(
+                "❌ File അയക്കാൻ കഴിഞ്ഞില്ല.\n\n"
+                + html.escape(
+                    str(e)
+                )
+            )
+
+        return
+
+    await message.reply_text(
+        "❌ ഈ തരത്തിലുള്ള reply ഇപ്പോൾ support ചെയ്യുന്നില്ല."
+    )
 
 
 # =========================================================
-# PAGE CALLBACK
+# YEAR PAGE CALLBACK
 # =========================================================
 
 async def page_callback(
@@ -676,7 +989,7 @@ async def page_callback(
 
         print(
             "PAGE ERROR:",
-            e
+            repr(e)
         )
 
 
@@ -717,7 +1030,7 @@ def download_drive_file(
 
 
 # =========================================================
-# READ INFO
+# READ INFO FILE
 # =========================================================
 
 def read_info_file(
@@ -754,13 +1067,17 @@ def read_info_file(
         ):
 
             try:
-                os.remove(temp_path)
+
+                os.remove(
+                    temp_path
+                )
+
             except Exception:
                 pass
 
 
 # =========================================================
-# PARSE INFO
+# PARSE ALBUM INFO
 # =========================================================
 
 def parse_info(
@@ -848,7 +1165,9 @@ def parse_info(
 # ALBUM CAPTION
 # =========================================================
 
-def create_album_caption(info):
+def create_album_caption(
+    info
+):
 
     text = (
         "🎬 <b>Album</b> : "
@@ -860,10 +1179,11 @@ def create_album_caption(info):
     if info["year"]:
 
         text += (
-            " • "
+            " ("
             + html.escape(
                 info["year"]
             )
+            + ")"
         )
 
     if info["singer"]:
@@ -906,7 +1226,7 @@ def create_album_caption(info):
 
 
 # =========================================================
-# OPEN YEAR
+# YEAR OPEN
 # =========================================================
 
 async def year_callback(
@@ -924,7 +1244,9 @@ async def year_callback(
 
         year_folder_id = parts[1]
 
-        page = int(parts[2])
+        page = int(
+            parts[2]
+        )
 
         items = get_items(
             year_folder_id
@@ -943,6 +1265,19 @@ async def year_callback(
                 albums.append(item)
 
             else:
+
+                name = item.get(
+                    "name",
+                    ""
+                ).lower()
+
+                if name in INFO_FILES:
+                    continue
+
+                if name.endswith(
+                    IMAGE_EXTENSIONS
+                ):
+                    continue
 
                 songs.append(item)
 
@@ -983,13 +1318,11 @@ async def year_callback(
             keyboard.append([
                 InlineKeyboardButton(
                     "🎵 "
-                    + song.get(
-                        "name",
-                        "Song"
-                    )
+                    + song["name"]
                     + " ⬇️",
                     callback_data=(
-                        f"file:{song['id']}"
+                        f"file:"
+                        f"{song['id']}"
                     )
                 )
             ])
@@ -1036,7 +1369,7 @@ async def year_callback(
 
 
 # =========================================================
-# OPEN ALBUM
+# ALBUM OPEN
 # =========================================================
 
 async def album_callback(
@@ -1054,7 +1387,9 @@ async def album_callback(
 
         album_folder_id = parts[1]
 
-        page = int(parts[2])
+        page = int(
+            parts[2]
+        )
 
         items = get_items(
             album_folder_id
@@ -1081,18 +1416,21 @@ async def album_callback(
                 "mimeType"
             )
 
+            # FOLDER
             if mime == FOLDER_MIME:
 
                 subfolders.append(item)
 
                 continue
 
+            # INFO
             if lower in INFO_FILES:
 
                 info_file = item
 
                 continue
 
+            # IMAGE
             if lower.endswith(
                 IMAGE_EXTENSIONS
             ):
@@ -1107,6 +1445,7 @@ async def album_callback(
 
                 continue
 
+            # SONG
             songs.append(item)
 
         subfolders.sort(
@@ -1148,6 +1487,7 @@ async def album_callback(
 
         keyboard = []
 
+        # SUB FOLDERS
         for folder in subfolders:
 
             keyboard.append([
@@ -1162,15 +1502,13 @@ async def album_callback(
                 )
             ])
 
+        # SONGS
         for song in songs:
 
             keyboard.append([
                 InlineKeyboardButton(
                     "🎵 "
-                    + song.get(
-                        "name",
-                        "Song"
-                    )
+                    + song["name"]
                     + " ⬇️",
                     callback_data=(
                         f"file:"
@@ -1179,6 +1517,7 @@ async def album_callback(
                 )
             ])
 
+        # BACK
         keyboard.append([
             InlineKeyboardButton(
                 "🔙 Back",
@@ -1197,7 +1536,7 @@ async def album_callback(
         )
 
         # =================================================
-        # POSTER
+        # POSTER IMAGE
         # =================================================
 
         if image_file:
@@ -1221,8 +1560,11 @@ async def album_callback(
                 )
 
                 try:
+
                     await query.message.delete()
+
                 except Exception:
+
                     pass
 
                 with open(
@@ -1247,10 +1589,13 @@ async def album_callback(
                 ):
 
                     try:
+
                         os.remove(
                             temp_path
                         )
+
                     except Exception:
+
                         pass
 
         else:
@@ -1300,8 +1645,11 @@ async def backyear_callback(
         )
 
         try:
+
             await query.message.delete()
+
         except Exception:
+
             pass
 
         await query.message.chat.send_message(
@@ -1317,7 +1665,7 @@ async def backyear_callback(
 
         print(
             "BACK ERROR:",
-            e
+            repr(e)
         )
 
 
@@ -1339,8 +1687,11 @@ async def home_callback(
     )
 
     try:
+
         await query.message.delete()
+
     except Exception:
+
         pass
 
     await query.message.chat.send_message(
@@ -1380,7 +1731,10 @@ async def file_callback(
         file_info = drive.files().get(
             fileId=file_id,
             fields=(
-                "id,name,mimeType,size"
+                "id,"
+                "name,"
+                "mimeType,"
+                "size"
             )
         ).execute()
 
@@ -1406,10 +1760,18 @@ async def file_callback(
             await query.message.reply_document(
                 document=file,
                 filename=file_name,
-                caption="🎵 " + file_name
+                caption=(
+                    "🎵 "
+                    + file_name
+                )
             )
 
     except Exception as e:
+
+        print(
+            "DOWNLOAD ERROR:",
+            repr(e)
+        )
 
         await query.message.reply_text(
             "❌ <b>Download failed</b>\n\n"
@@ -1423,186 +1785,22 @@ async def file_callback(
 
         if (
             temp_path
-            and os.path.exists(
-                temp_path
-            )
+            and os.path.exists(temp_path)
         ):
 
             try:
+
                 os.remove(
                     temp_path
                 )
+
             except Exception:
+
                 pass
 
 
 # =========================================================
-# SEARCH
-# =========================================================
-
-def search_drive(
-    folder_id,
-    search_text,
-    results,
-    limit=30
-):
-
-    if len(results) >= limit:
-
-        return
-
-    items = get_items(
-        folder_id
-    )
-
-    search_lower = (
-        search_text.lower()
-    )
-
-    for item in items:
-
-        name = item.get(
-            "name",
-            ""
-        )
-
-        mime = item.get(
-            "mimeType"
-        )
-
-        if (
-            search_lower
-            in name.lower()
-        ):
-
-            results.append(item)
-
-            if len(results) >= limit:
-
-                return
-
-        if mime == FOLDER_MIME:
-
-            search_drive(
-                item["id"],
-                search_text,
-                results,
-                limit
-            )
-
-            if len(results) >= limit:
-
-                return
-
-
-async def search_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    if context.args:
-
-        search_text = " ".join(
-            context.args
-        )
-
-        await perform_search(
-            update.message,
-            search_text
-        )
-
-    else:
-
-        context.user_data[
-            "search_mode"
-        ] = True
-
-        await update.message.reply_text(
-            "🔍 <b>Search Songs</b>\n\n"
-            "Movie / Song name type ചെയ്ത് അയക്കൂ.",
-            parse_mode="HTML"
-        )
-
-
-async def perform_search(
-    message,
-    search_text
-):
-
-    results = []
-
-    try:
-
-        search_drive(
-            ROOT_FOLDER_ID,
-            search_text,
-            results,
-            30
-        )
-
-        if not results:
-
-            await message.reply_text(
-                "❌ Search result ഒന്നും കണ്ടെത്തിയില്ല."
-            )
-
-            return
-
-        keyboard = []
-
-        for item in results:
-
-            if item.get(
-                "mimeType"
-            ) == FOLDER_MIME:
-
-                keyboard.append([
-                    InlineKeyboardButton(
-                        "📁 "
-                        + item["name"],
-                        callback_data=(
-                            f"album:"
-                            f"{item['id']}:0"
-                        )
-                    )
-                ])
-
-            else:
-
-                keyboard.append([
-                    InlineKeyboardButton(
-                        "🎵 "
-                        + item["name"]
-                        + " ⬇️",
-                        callback_data=(
-                            f"file:"
-                            f"{item['id']}"
-                        )
-                    )
-                ])
-
-        await message.reply_text(
-            "🔍 <b>Search Results</b>\n\n"
-            "Found: "
-            + str(len(results)),
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(
-                keyboard
-            )
-        )
-
-    except Exception as e:
-
-        await message.reply_text(
-            "❌ Search failed.\n\n"
-            + html.escape(
-                str(e)
-            )
-        )
-
-
-# =========================================================
-# LATEST
+# LATEST SONGS
 # =========================================================
 
 def get_latest_files(
@@ -1617,9 +1815,22 @@ def get_latest_files(
 
     for item in items:
 
-        if item.get(
+        if len(results) >= limit:
+
+            return
+
+        name = item.get(
+            "name",
+            ""
+        )
+
+        lower = name.lower()
+
+        mime = item.get(
             "mimeType"
-        ) == FOLDER_MIME:
+        )
+
+        if mime == FOLDER_MIME:
 
             get_latest_files(
                 item["id"],
@@ -1629,19 +1840,12 @@ def get_latest_files(
 
         else:
 
-            name = item.get(
-                "name",
-                ""
-            ).lower()
-
-            if name.endswith(
-                IMAGE_EXTENSIONS
-            ):
-
+            if lower in INFO_FILES:
                 continue
 
-            if name in INFO_FILES:
-
+            if lower.endswith(
+                IMAGE_EXTENSIONS
+            ):
                 continue
 
             results.append(item)
@@ -1688,10 +1892,7 @@ async def latest_command(
             keyboard.append([
                 InlineKeyboardButton(
                     "🆕 "
-                    + item.get(
-                        "name",
-                        "Song"
-                    )
+                    + item["name"]
                     + " ⬇️",
                     callback_data=(
                         f"file:"
@@ -1701,8 +1902,7 @@ async def latest_command(
             ])
 
         await update.message.reply_text(
-            "🆕 <b>Latest Songs</b>\n\n"
-            "Recently added / modified songs:",
+            "🆕 <b>Latest Songs</b>",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(
                 keyboard
@@ -1715,47 +1915,9 @@ async def latest_command(
             "❌ Latest songs load ചെയ്യാൻ കഴിഞ്ഞില്ല.\n\n"
             + html.escape(
                 str(e)
-            )
+            ),
+            parse_mode="HTML"
         )
-
-
-# =========================================================
-# SEARCH TEXT HANDLER
-# =========================================================
-
-async def search_message_handler(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    if not context.user_data.get(
-        "search_mode",
-        False
-    ):
-
-        return
-
-    context.user_data[
-        "search_mode"
-    ] = False
-
-    search_text = (
-        update.message.text
-        or ""
-    ).strip()
-
-    if not search_text:
-
-        await update.message.reply_text(
-            "❌ Search text അയക്കൂ."
-        )
-
-        return
-
-    await perform_search(
-        update.message,
-        search_text
-    )
 
 
 # =========================================================
@@ -1810,15 +1972,15 @@ def main():
 
     app.add_handler(
         CommandHandler(
-            "request",
-            request_command
+            "search",
+            search_command
         )
     )
 
     app.add_handler(
         CommandHandler(
-            "search",
-            search_command
+            "request",
+            request_command
         )
     )
 
@@ -1831,6 +1993,7 @@ def main():
 
     # =====================================================
     # ADMIN REPLY
+    # IMPORTANT: BEFORE NORMAL TEXT HANDLER
     # =====================================================
 
     app.add_handler(
@@ -1842,31 +2005,19 @@ def main():
     )
 
     # =====================================================
-    # REQUEST MESSAGE
+    # SEARCH + REQUEST TEXT
     # =====================================================
 
     app.add_handler(
         MessageHandler(
             filters.TEXT
             & ~filters.COMMAND,
-            request_message
+            text_message_handler
         )
     )
 
     # =====================================================
-    # SEARCH MESSAGE
-    # =====================================================
-
-    app.add_handler(
-        MessageHandler(
-            filters.TEXT
-            & ~filters.COMMAND,
-            search_message_handler
-        )
-    )
-
-    # =====================================================
-    # PAGE
+    # YEAR PAGINATION
     # =====================================================
 
     app.add_handler(
@@ -1943,7 +2094,7 @@ def main():
     )
 
     # =====================================================
-    # RUN
+    # START BOT
     # =====================================================
 
     print(
