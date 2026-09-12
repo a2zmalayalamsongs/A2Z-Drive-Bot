@@ -68,6 +68,8 @@ FOLDER_MIME = (
 
 YEARS_PER_PAGE = 10
 
+ALBUMS_PER_PAGE = 10
+
 IMAGE_EXTENSIONS = (
     ".jpg",
     ".jpeg",
@@ -81,9 +83,19 @@ INFO_FILES = (
     "album info.txt"
 )
 
+SONG_EXTENSIONS = (
+    ".mp3",
+    ".m4a",
+    ".aac",
+    ".wav",
+    ".flac",
+    ".ogg",
+    ".opus"
+)
+
 
 # =========================================================
-# GOOGLE DRIVE - GET ITEMS
+# DRIVE ITEMS
 # =========================================================
 
 def get_items(folder_id):
@@ -101,7 +113,8 @@ def get_items(folder_id):
             "name,"
             "mimeType,"
             "size,"
-            "modifiedTime"
+            "modifiedTime,"
+            "parents"
             ")"
         ),
         pageSize=1000
@@ -114,7 +127,7 @@ def get_items(folder_id):
 
 
 # =========================================================
-# GET FOLDER NAME
+# FOLDER NAME
 # =========================================================
 
 def get_folder_name(folder_id):
@@ -128,21 +141,48 @@ def get_folder_name(folder_id):
 
         return result.get(
             "name",
-            "Folder"
+            "Album"
         )
+
+    except Exception:
+
+        return "Album"
+
+
+# =========================================================
+# GET PARENT FOLDER
+# =========================================================
+
+def get_parent_folder(folder_id):
+
+    try:
+
+        result = drive.files().get(
+            fileId=folder_id,
+            fields="parents"
+        ).execute()
+
+        parents = result.get(
+            "parents",
+            []
+        )
+
+        if parents:
+
+            return parents[0]
 
     except Exception as e:
 
         print(
-            "FOLDER NAME ERROR:",
+            "PARENT ERROR:",
             repr(e)
         )
 
-        return "Folder"
+    return None
 
 
 # =========================================================
-# GET YEAR FOLDERS
+# YEARS
 # =========================================================
 
 def get_year_folders():
@@ -185,95 +225,10 @@ def get_year_folders():
 
 
 # =========================================================
-# FIND YEAR BY ID
-# =========================================================
-
-def find_year_by_id(folder_id):
-
-    years = get_year_folders()
-
-    for year in years:
-
-        if year["id"] == folder_id:
-
-            return year
-
-    return None
-
-
-# =========================================================
-# NAVIGATION STACK
-#
-# Example:
-#
-# [
-#   {"type": "years", "page": 0},
-#   {"type": "year", "id": "2024ID", "page": 0},
-#   {"type": "folder", "id": "albumID"},
-#   {"type": "folder", "id": "sub1ID"},
-#   {"type": "folder", "id": "sub2ID"}
-# ]
-#
-# Back simply POPS one level.
-# =========================================================
-
-def get_nav_stack(context):
-
-    if "nav_stack" not in context.user_data:
-
-        context.user_data[
-            "nav_stack"
-        ] = []
-
-    return context.user_data[
-        "nav_stack"
-    ]
-
-
-# =========================================================
-# RESET NAVIGATION
-# =========================================================
-
-def reset_navigation(
-    context,
-    page=0
-):
-
-    context.user_data[
-        "nav_stack"
-    ] = [
-        {
-            "type": "years",
-            "page": page
-        }
-    ]
-
-
-# =========================================================
-# PUSH NAVIGATION
-# =========================================================
-
-def push_navigation(
-    context,
-    entry
-):
-
-    stack = get_nav_stack(
-        context
-    )
-
-    stack.append(
-        entry
-    )
-
-
-# =========================================================
 # YEAR KEYBOARD
 # =========================================================
 
-def build_year_keyboard(
-    page=0
-):
+def build_year_keyboard(page=0):
 
     years = get_year_folders()
 
@@ -287,42 +242,35 @@ def build_year_keyboard(
         // YEARS_PER_PAGE
     )
 
-    if page < 0:
-
-        page = 0
-
-    if page >= total_pages:
-
-        page = total_pages - 1
+    page = max(
+        0,
+        min(
+            page,
+            total_pages - 1
+        )
+    )
 
     start = (
         page
         * YEARS_PER_PAGE
     )
 
-    end = (
-        start
-        + YEARS_PER_PAGE
-    )
-
     page_years = years[
-        start:end
+        start:
+        start + YEARS_PER_PAGE
     ]
 
     keyboard = []
 
     row = []
 
-    for year in page_years:
+    for item in page_years:
 
         row.append(
             InlineKeyboardButton(
-                "📁 "
-                + year["name"],
+                f"📁 {item['name']}",
                 callback_data=(
-                    f"y:"
-                    f"{year['id']}:"
-                    f"{page}"
+                    f"year:{item['id']}:{page}"
                 )
             )
         )
@@ -345,8 +293,7 @@ def build_year_keyboard(
             InlineKeyboardButton(
                 "⬅️ Previous",
                 callback_data=(
-                    f"page:"
-                    f"{page - 1}"
+                    f"page:{page - 1}"
                 )
             )
         )
@@ -357,8 +304,7 @@ def build_year_keyboard(
             InlineKeyboardButton(
                 "Next ➡️",
                 callback_data=(
-                    f"page:"
-                    f"{page + 1}"
+                    f"page:{page + 1}"
                 )
             )
         )
@@ -380,11 +326,11 @@ def build_year_keyboard(
 
 
 # =========================================================
-# SEND YEARS
+# SHOW YEARS
 # =========================================================
 
-async def send_years(
-    chat,
+async def show_years(
+    message,
     page=0
 ):
 
@@ -392,45 +338,13 @@ async def send_years(
         page
     )
 
-    await chat.send_message(
+    await message.reply_text(
         "🎵 <b>A2Z Malayalam Songs</b>\n\n"
         "📂 <b>Select a year:</b>",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(
             keyboard
         )
-    )
-
-
-# =========================================================
-# SHOW YEARS FROM CALLBACK
-# =========================================================
-
-async def show_years_from_callback(
-    query,
-    context,
-    page=0
-):
-
-    reset_navigation(
-        context,
-        page
-    )
-
-    try:
-
-        await query.message.delete()
-
-    except Exception as e:
-
-        print(
-            "DELETE YEARS ERROR:",
-            repr(e)
-        )
-
-    await send_years(
-        query.message.chat,
-        page
     )
 
 
@@ -451,13 +365,8 @@ async def start(
         "request_mode"
     ] = False
 
-    reset_navigation(
-        context,
-        0
-    )
-
-    await send_years(
-        update.message.chat,
+    await show_years(
+        update.message,
         0
     )
 
@@ -516,7 +425,8 @@ async def about_command(
         "🎤 Singer Information\n"
         "🎵 Music Information\n"
         "🎬 Director Information\n"
-        "👥 Artist Information\n\n"
+        "👥 Artist Information\n"
+        "⬇️ MP3 Download\n\n"
         "📩 Song request ചെയ്യാൻ "
         "/request ഉപയോഗിക്കുക."
     )
@@ -670,7 +580,7 @@ def search_drive(
 
 
 # =========================================================
-# PERFORM SEARCH
+# SEARCH
 # =========================================================
 
 async def perform_search(
@@ -741,8 +651,7 @@ async def perform_search(
                     InlineKeyboardButton(
                         "🎬 " + name,
                         callback_data=(
-                            f"searchfolder:"
-                            f"{item['id']}"
+                            f"album:{item['id']}"
                         )
                     )
                 ])
@@ -755,8 +664,7 @@ async def perform_search(
                         + name
                         + " ⬇️",
                         callback_data=(
-                            f"file:"
-                            f"{item['id']}"
+                            f"file:{item['id']}"
                         )
                     )
                 ])
@@ -794,7 +702,7 @@ async def perform_search(
 
 
 # =========================================================
-# REQUEST COMMAND
+# REQUEST
 # =========================================================
 
 async def request_command(
@@ -967,8 +875,6 @@ async def text_message_handler(
             context
         )
 
-        return
-
 
 # =========================================================
 # ADMIN REPLY
@@ -1084,10 +990,7 @@ async def admin_reply_handler(
         except Exception as e:
 
             await message.reply_text(
-                "❌ Photo അയക്കാൻ കഴിഞ്ഞില്ല.\n\n"
-                + html.escape(
-                    str(e)
-                )
+                "❌ Photo അയക്കാൻ കഴിഞ്ഞില്ല."
             )
 
         return
@@ -1109,17 +1012,10 @@ async def admin_reply_handler(
         except Exception as e:
 
             await message.reply_text(
-                "❌ File അയക്കാൻ കഴിഞ്ഞില്ല.\n\n"
-                + html.escape(
-                    str(e)
-                )
+                "❌ File അയക്കാൻ കഴിഞ്ഞില്ല."
             )
 
         return
-
-    await message.reply_text(
-        "❌ ഈ തരത്തിലുള്ള reply support ചെയ്യുന്നില്ല."
-    )
 
 
 # =========================================================
@@ -1138,28 +1034,20 @@ async def page_callback(
     try:
 
         page = int(
-            query.data.split(
-                ":",
-                1
-            )[1]
+            query.data.split(":")[1]
         )
 
-        reset_navigation(
-            context,
+        keyboard = build_year_keyboard(
             page
         )
 
-        try:
-
-            await query.message.delete()
-
-        except Exception:
-
-            pass
-
-        await send_years(
-            query.message.chat,
-            page
+        await query.edit_message_text(
+            "🎵 <b>A2Z Malayalam Songs</b>\n\n"
+            "📂 <b>Select a year:</b>",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(
+                keyboard
+            )
         )
 
     except Exception as e:
@@ -1235,7 +1123,7 @@ def read_info_file(
     except Exception as e:
 
         print(
-            "INFO FILE ERROR:",
+            "INFO READ ERROR:",
             repr(e)
         )
 
@@ -1262,7 +1150,7 @@ def read_info_file(
 
 
 # =========================================================
-# PARSE ALBUM INFO
+# PARSE INFO
 # =========================================================
 
 def parse_info(
@@ -1276,13 +1164,15 @@ def parse_info(
 
         "year": "",
 
+        "director": "",
+
         "singer": "",
 
         "music": "",
 
-        "director": "",
-
         "artists": "",
+
+        "label": "",
 
         "upload_by": ""
     }
@@ -1322,6 +1212,13 @@ def parse_info(
             data["year"] = value
 
         elif key in (
+            "director",
+            "directed by"
+        ):
+
+            data["director"] = value
+
+        elif key in (
             "singer",
             "singers"
         ):
@@ -1337,19 +1234,19 @@ def parse_info(
             data["music"] = value
 
         elif key in (
-            "director",
-            "directed by"
-        ):
-
-            data["director"] = value
-
-        elif key in (
             "artist",
             "artists",
             "cast"
         ):
 
             data["artists"] = value
+
+        elif key in (
+            "label",
+            "music label"
+        ):
+
+            data["label"] = value
 
         elif key in (
             "upload by",
@@ -1363,7 +1260,149 @@ def parse_info(
 
 
 # =========================================================
-# CREATE ALBUM CAPTION
+# GET ALBUM DATA
+# =========================================================
+
+def get_album_data(
+    folder_id
+):
+
+    items = get_items(
+        folder_id
+    )
+
+    album_name = get_folder_name(
+        folder_id
+    )
+
+    info_file = None
+
+    image_file = None
+
+    songs = []
+
+    # IMPORTANT:
+    # SUB-FOLDERS ARE IGNORED
+    # ONLY DIRECT FILES ARE USED
+
+    for item in items:
+
+        name = item.get(
+            "name",
+            ""
+        ).strip()
+
+        lower = name.lower()
+
+        mime = item.get(
+            "mimeType"
+        )
+
+        # Ignore folders
+        if mime == FOLDER_MIME:
+
+            continue
+
+        # Info
+        if lower in INFO_FILES:
+
+            info_file = item
+
+            continue
+
+        # Poster
+        if lower.endswith(
+            IMAGE_EXTENSIONS
+        ):
+
+            if image_file is None:
+
+                image_file = item
+
+            continue
+
+        # Only song files
+        if lower.endswith(
+            SONG_EXTENSIONS
+        ):
+
+            songs.append(
+                item
+            )
+
+    songs.sort(
+        key=lambda x:
+        x.get(
+            "name",
+            ""
+        ).lower()
+    )
+
+    info_text = ""
+
+    if info_file:
+
+        info_text = read_info_file(
+            info_file["id"]
+        )
+
+    info = parse_info(
+        info_text,
+        album_name
+    )
+
+    return {
+        "folder_id": folder_id,
+        "album_name": album_name,
+        "info": info,
+        "poster": image_file,
+        "songs": songs
+    }
+
+
+# =========================================================
+# ALBUM CARD CAPTION
+# =========================================================
+
+def create_album_card_caption(
+    info,
+    total_tracks
+):
+
+    album = html.escape(
+        info["album"]
+    )
+
+    year = html.escape(
+        info["year"]
+        or "N/A"
+    )
+
+    label = html.escape(
+        info["label"]
+        or "A2Z Malayalam Songs"
+    )
+
+    return (
+        "💿 <b>"
+        + album
+        + "</b>\n\n"
+
+        "📅 <b>Year</b> : "
+        + year
+        + "\n"
+
+        "🎶 <b>Tracks</b> : "
+        + str(total_tracks)
+        + "\n"
+
+        "🏷️ <b>Label</b> : "
+        + label
+    )
+
+
+# =========================================================
+# ALBUM FULL CAPTION
 # =========================================================
 
 def create_album_caption(
@@ -1444,56 +1483,192 @@ def create_album_caption(
 
 
 # =========================================================
-# RENDER YEAR
+# SEND ALBUM CARD
 # =========================================================
 
-async def render_year(
-    query,
-    context,
-    folder_id,
-    year_name,
-    page
+async def send_album_card(
+    chat,
+    album
+):
+
+    info = album["info"]
+
+    songs = album["songs"]
+
+    caption = create_album_card_caption(
+        info,
+        len(songs)
+    )
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "💿 View Album ➡️",
+                callback_data=(
+                    f"album:{album['folder_id']}"
+                )
+            )
+        ]
+    ])
+
+    poster = album["poster"]
+
+    if poster:
+
+        temp_path = None
+
+        try:
+
+            image_name = poster.get(
+                "name",
+                "poster.jpg"
+            )
+
+            extension = os.path.splitext(
+                image_name
+            )[1]
+
+            temp_path = download_drive_file(
+                poster["id"],
+                extension
+            )
+
+            with open(
+                temp_path,
+                "rb"
+            ) as photo:
+
+                await chat.send_photo(
+                    photo=photo,
+                    caption=caption,
+                    parse_mode="HTML",
+                    reply_markup=keyboard
+                )
+
+        finally:
+
+            if (
+                temp_path
+                and os.path.exists(
+                    temp_path
+                )
+            ):
+
+                try:
+
+                    os.remove(
+                        temp_path
+                    )
+
+                except Exception:
+
+                    pass
+
+    else:
+
+        await chat.send_message(
+            caption,
+            parse_mode="HTML",
+            reply_markup=keyboard
+        )
+
+
+# =========================================================
+# ALBUM LIST NAVIGATION
+# =========================================================
+
+def build_album_navigation(
+    page,
+    total_pages,
+    year_id
+):
+
+    keyboard = []
+
+    navigation = []
+
+    if page > 0:
+
+        navigation.append(
+            InlineKeyboardButton(
+                "⬅️",
+                callback_data=(
+                    f"albums:{year_id}:{page - 1}"
+                )
+            )
+        )
+
+    navigation.append(
+        InlineKeyboardButton(
+            f"{page + 1} / {total_pages}",
+            callback_data="nothing"
+        )
+    )
+
+    if page < total_pages - 1:
+
+        navigation.append(
+            InlineKeyboardButton(
+                "➡️",
+                callback_data=(
+                    f"albums:{year_id}:{page + 1}"
+                )
+            )
+        )
+
+    keyboard.append(
+        navigation
+    )
+
+    keyboard.append([
+        InlineKeyboardButton(
+            "⬅️ Back to Years",
+            callback_data=(
+                f"backyear:{year_id}"
+            )
+        ),
+        InlineKeyboardButton(
+            "🏠 Main Menu",
+            callback_data="home"
+        )
+    ])
+
+    return InlineKeyboardMarkup(
+        keyboard
+    )
+
+
+# =========================================================
+# SHOW ALBUM LIST
+# =========================================================
+
+async def show_album_list(
+    chat,
+    year_id,
+    page=0,
+    old_message=None
 ):
 
     try:
 
         items = get_items(
-            folder_id
+            year_id
         )
 
+        # ONLY DIRECT FOLDERS = ALBUMS
         albums = []
-        songs = []
 
         for item in items:
 
-            mime = item.get(
+            if item.get(
                 "mimeType"
+            ) != FOLDER_MIME:
+
+                continue
+
+            albums.append(
+                item
             )
-
-            name = item.get(
-                "name",
-                ""
-            )
-
-            lower = name.lower()
-
-            if mime == FOLDER_MIME:
-
-                albums.append(item)
-
-                continue
-
-            if lower in INFO_FILES:
-
-                continue
-
-            if lower.endswith(
-                IMAGE_EXTENSIONS
-            ):
-
-                continue
-
-            songs.append(item)
 
         albums.sort(
             key=lambda x:
@@ -1503,82 +1678,81 @@ async def render_year(
             ).lower()
         )
 
-        songs.sort(
-            key=lambda x:
-            x.get(
-                "name",
-                ""
-            ).lower()
-        )
-
-        keyboard = []
-
-        # =================================================
-        # ALBUMS
-        # =================================================
-
-        for album in albums:
-
-            keyboard.append([
-                InlineKeyboardButton(
-                    "🎬 "
-                    + album["name"],
-                    callback_data=(
-                        f"f:"
-                        f"{album['id']}"
-                    )
-                )
-            ])
-
-        # =================================================
-        # DIRECT SONGS
-        # =================================================
-
-        for song in songs:
-
-            keyboard.append([
-                InlineKeyboardButton(
-                    "🎵 "
-                    + song["name"]
-                    + " ⬇️",
-                    callback_data=(
-                        f"file:"
-                        f"{song['id']}"
-                    )
-                )
-            ])
-
-        # =================================================
-        # BACK TO YEARS
-        # =================================================
-
-        keyboard.append([
-            InlineKeyboardButton(
-                "🔙 Back to Years",
-                callback_data="back"
+        total_pages = max(
+            1,
+            (
+                len(albums)
+                + ALBUMS_PER_PAGE
+                - 1
             )
-        ])
-
-        markup = InlineKeyboardMarkup(
-            keyboard
+            // ALBUMS_PER_PAGE
         )
 
-        # Current message may be photo.
-        try:
+        page = max(
+            0,
+            min(
+                page,
+                total_pages - 1
+            )
+        )
 
-            await query.message.delete()
+        start = (
+            page
+            * ALBUMS_PER_PAGE
+        )
 
-        except Exception:
+        page_albums = albums[
+            start:
+            start + ALBUMS_PER_PAGE
+        ]
 
-            pass
+        # Delete old year message
+        if old_message:
 
-        await query.message.chat.send_message(
+            try:
+
+                await old_message.delete()
+
+            except Exception:
+
+                pass
+
+        year_name = get_folder_name(
+            year_id
+        )
+
+        await chat.send_message(
+            "💿 <b>Malayalam Albums</b>\n\n"
             "📅 <b>"
             + html.escape(
                 year_name
             )
-            + "</b>\n\n"
-            "🎬 <b>Select an album:</b>",
+            + "</b>\n"
+            "🎬 Select an album:",
+            parse_mode="HTML"
+        )
+
+        # Send album cards
+        for album_folder in page_albums:
+
+            album = get_album_data(
+                album_folder["id"]
+            )
+
+            await send_album_card(
+                chat,
+                album
+            )
+
+        # Navigation message
+        markup = build_album_navigation(
+            page,
+            total_pages,
+            year_id
+        )
+
+        await chat.send_message(
+            "📂 <b>Album Navigation</b>",
             parse_mode="HTML",
             reply_markup=markup
         )
@@ -1586,11 +1760,11 @@ async def render_year(
     except Exception as e:
 
         print(
-            "RENDER YEAR ERROR:",
+            "ALBUM LIST ERROR:",
             repr(e)
         )
 
-        await query.message.chat.send_message(
+        await chat.send_message(
             "❌ <b>Album list തുറക്കാൻ കഴിഞ്ഞില്ല.</b>\n\n"
             + html.escape(
                 str(e)
@@ -1614,55 +1788,15 @@ async def year_callback(
 
     try:
 
-        parts = query.data.split(
-            ":",
-            2
-        )
+        parts = query.data.split(":")
 
-        folder_id = parts[1]
+        year_id = parts[1]
 
-        page = int(
-            parts[2]
-        )
-
-        year = find_year_by_id(
-            folder_id
-        )
-
-        if not year:
-
-            await query.message.chat.send_message(
-                "❌ Year കണ്ടെത്താൻ കഴിഞ്ഞില്ല."
-            )
-
-            return
-
-        # =================================================
-        # RESET STACK TO YEARS
-        # THEN PUSH YEAR
-        # =================================================
-
-        reset_navigation(
-            context,
-            page
-        )
-
-        push_navigation(
-            context,
-            {
-                "type": "year",
-                "id": folder_id,
-                "page": page,
-                "name": year["name"]
-            }
-        )
-
-        await render_year(
-            query,
-            context,
-            folder_id,
-            year["name"],
-            page
+        await show_album_list(
+            query.message.chat,
+            year_id,
+            0,
+            query.message
         )
 
     except Exception as e:
@@ -1672,7 +1806,7 @@ async def year_callback(
             repr(e)
         )
 
-        await query.message.chat.send_message(
+        await query.message.reply_text(
             "❌ <b>Year തുറക്കാൻ കഴിഞ്ഞില്ല.</b>\n\n"
             + html.escape(
                 str(e)
@@ -1682,132 +1816,67 @@ async def year_callback(
 
 
 # =========================================================
-# RENDER FOLDER
-#
-# Works for ANY level:
-#
-# Album
-# Sub Folder
-# Sub Folder 2
-# Sub Folder 3
-# etc.
+# ALBUM PAGINATION
 # =========================================================
 
-async def render_folder(
+async def albums_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    query = update.callback_query
+
+    await query.answer()
+
+    try:
+
+        parts = query.data.split(":")
+
+        year_id = parts[1]
+
+        page = int(
+            parts[2]
+        )
+
+        await show_album_list(
+            query.message.chat,
+            year_id,
+            page,
+            query.message
+        )
+
+    except Exception as e:
+
+        print(
+            "ALBUM PAGE ERROR:",
+            repr(e)
+        )
+
+        await query.message.reply_text(
+            "❌ Album page തുറക്കാൻ കഴിഞ്ഞില്ല."
+        )
+
+
+# =========================================================
+# SHOW ALBUM
+# =========================================================
+
+async def show_album(
     query,
-    context,
     folder_id
 ):
 
     try:
 
-        items = get_items(
+        album = get_album_data(
             folder_id
         )
 
-        subfolders = []
-        songs = []
+        info = album["info"]
 
-        image_file = None
-        info_file = None
+        songs = album["songs"]
 
-        # =================================================
-        # READ CONTENT
-        # =================================================
-
-        for item in items:
-
-            name = item.get(
-                "name",
-                ""
-            ).strip()
-
-            lower_name = name.lower()
-
-            mime = item.get(
-                "mimeType"
-            )
-
-            # FOLDER
-            if mime == FOLDER_MIME:
-
-                subfolders.append(
-                    item
-                )
-
-                continue
-
-            # INFO
-            if lower_name in INFO_FILES:
-
-                info_file = item
-
-                continue
-
-            # IMAGE
-            if lower_name.endswith(
-                IMAGE_EXTENSIONS
-            ):
-
-                if image_file is None:
-
-                    image_file = item
-
-                continue
-
-            # SONG / FILE
-            songs.append(
-                item
-            )
-
-        # =================================================
-        # SORT
-        # =================================================
-
-        subfolders.sort(
-            key=lambda x:
-            x.get(
-                "name",
-                ""
-            ).lower()
-        )
-
-        songs.sort(
-            key=lambda x:
-            x.get(
-                "name",
-                ""
-            ).lower()
-        )
-
-        # =================================================
-        # FOLDER NAME
-        # =================================================
-
-        folder_name = get_folder_name(
-            folder_id
-        )
-
-        # =================================================
-        # INFO
-        # =================================================
-
-        info_text = ""
-
-        if info_file:
-
-            info_text = read_info_file(
-                info_file["id"]
-            )
-
-        info = parse_info(
-            info_text,
-            folder_name
-        )
-
-        # =================================================
-        # CAPTION
-        # =================================================
+        poster = album["poster"]
 
         caption = create_album_caption(
             info,
@@ -1815,34 +1884,16 @@ async def render_folder(
         )
 
         # =================================================
-        # KEYBOARD
+        # BACK TO IMMEDIATE PARENT
         # =================================================
+
+        parent_id = get_parent_folder(
+            folder_id
+        )
 
         keyboard = []
 
-        # =================================================
-        # SUB FOLDERS
-        #
-        # Every folder simply pushes another level.
-        # =================================================
-
-        for folder in subfolders:
-
-            keyboard.append([
-                InlineKeyboardButton(
-                    "📁 "
-                    + folder["name"],
-                    callback_data=(
-                        f"f:"
-                        f"{folder['id']}"
-                    )
-                )
-            ])
-
-        # =================================================
         # SONGS
-        # =================================================
-
         for song in songs:
 
             keyboard.append([
@@ -1851,44 +1902,63 @@ async def render_folder(
                     + song["name"]
                     + " ⬇️",
                     callback_data=(
-                        f"file:"
-                        f"{song['id']}"
+                        f"file:{song['id']}"
                     )
                 )
             ])
 
-        # =================================================
         # BACK
-        #
-        # Always one level back.
-        # =================================================
+        if parent_id:
 
-        keyboard.append([
-            InlineKeyboardButton(
-                "🔙 Back",
-                callback_data="back"
-            ),
-            InlineKeyboardButton(
-                "🏠 Main Menu",
-                callback_data="home"
-            )
-        ])
+            keyboard.append([
+                InlineKeyboardButton(
+                    "⬅️ Back",
+                    callback_data=(
+                        f"backalbum:{parent_id}"
+                    )
+                ),
+                InlineKeyboardButton(
+                    "🏠 Main Menu",
+                    callback_data="home"
+                )
+            ])
+
+        else:
+
+            keyboard.append([
+                InlineKeyboardButton(
+                    "🏠 Main Menu",
+                    callback_data="home"
+                )
+            ])
 
         markup = InlineKeyboardMarkup(
             keyboard
         )
 
         # =================================================
-        # POSTER
+        # DELETE CURRENT ALBUM CARD
         # =================================================
 
-        if image_file:
+        try:
+
+            await query.message.delete()
+
+        except Exception:
+
+            pass
+
+        # =================================================
+        # SEND ALBUM DETAILS
+        # =================================================
+
+        if poster:
 
             temp_path = None
 
             try:
 
-                image_name = image_file.get(
+                image_name = poster.get(
                     "name",
                     "poster.jpg"
                 )
@@ -1898,21 +1968,9 @@ async def render_folder(
                 )[1]
 
                 temp_path = download_drive_file(
-                    image_file["id"],
+                    poster["id"],
                     extension
                 )
-
-                # Delete current message
-                try:
-
-                    await query.message.delete()
-
-                except Exception as e:
-
-                    print(
-                        "DELETE CURRENT FOLDER:",
-                        repr(e)
-                    )
 
                 with open(
                     temp_path,
@@ -1947,18 +2005,6 @@ async def render_folder(
 
         else:
 
-            # =================================================
-            # NO POSTER
-            # =================================================
-
-            try:
-
-                await query.message.delete()
-
-            except Exception:
-
-                pass
-
             await query.message.chat.send_message(
                 caption,
                 parse_mode="HTML",
@@ -1968,12 +2014,12 @@ async def render_folder(
     except Exception as e:
 
         print(
-            "RENDER FOLDER ERROR:",
+            "SHOW ALBUM ERROR:",
             repr(e)
         )
 
         await query.message.chat.send_message(
-            "❌ <b>Folder തുറക്കാൻ കഴിഞ്ഞില്ല.</b>\n\n"
+            "❌ <b>Album തുറക്കാൻ കഴിഞ്ഞില്ല.</b>\n\n"
             + html.escape(
                 str(e)
             ),
@@ -1982,17 +2028,10 @@ async def render_folder(
 
 
 # =========================================================
-# FOLDER CALLBACK
-#
-# Every folder = PUSH one navigation level
-#
-# Year → Album
-# Album → Sub1
-# Sub1 → Sub2
-# Sub2 → Sub3
+# ALBUM CALLBACK
 # =========================================================
 
-async def folder_callback(
+async def album_callback(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
@@ -2003,95 +2042,38 @@ async def folder_callback(
 
     try:
 
-        folder_id = query.data.split(
-            ":",
-            1
-        )[1]
-
-        stack = get_nav_stack(
-            context
+        folder_id = (
+            query.data.split(
+                ":",
+                1
+            )[1]
         )
 
-        # =================================================
-        # SAFETY
-        # =================================================
-
-        if not stack:
-
-            reset_navigation(
-                context,
-                0
-            )
-
-        # =================================================
-        # PUSH NEW FOLDER
-        # =================================================
-
-        push_navigation(
-            context,
-            {
-                "type": "folder",
-                "id": folder_id
-            }
-        )
-
-        # =================================================
-        # SHOW FOLDER
-        # =================================================
-
-        await render_folder(
+        await show_album(
             query,
-            context,
             folder_id
         )
 
     except Exception as e:
 
         print(
-            "FOLDER CALLBACK ERROR:",
+            "ALBUM CALLBACK ERROR:",
             repr(e)
         )
 
-        await query.message.chat.send_message(
-            "❌ <b>Folder തുറക്കാൻ കഴിഞ്ഞില്ല.</b>\n\n"
+        await query.message.reply_text(
+            "❌ Album തുറക്കാൻ കഴിഞ്ഞില്ല.\n\n"
             + html.escape(
                 str(e)
-            ),
-            parse_mode="HTML"
+            )
         )
 
 
 # =========================================================
-# BACK CALLBACK
-#
-# THIS IS THE IMPORTANT PART
-#
-# Stack example:
-#
-# [Years, Year, Album, Sub1, Sub2]
-#
-# Back:
-#
-# pop Sub2
-# → show Sub1
-#
-# Back:
-#
-# pop Sub1
-# → show Album
-#
-# Back:
-#
-# pop Album
-# → show Year
-#
-# Back:
-#
-# pop Year
-# → show Years
+# BACK TO ALBUM LIST
 # =========================================================
 
-async def back_callback(
+async def backalbum_callback(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
@@ -2102,195 +2084,108 @@ async def back_callback(
 
     try:
 
-        stack = get_nav_stack(
-            context
+        parent_id = (
+            query.data.split(
+                ":",
+                1
+            )[1]
         )
 
-        # =================================================
-        # NOTHING TO GO BACK
-        # =================================================
-
-        if len(stack) <= 1:
-
-            await show_years_from_callback(
-                query,
-                context,
-                0
-            )
-
-            return
-
-        # =================================================
-        # REMOVE CURRENT LEVEL
-        # =================================================
-
-        stack.pop()
-
-        # =================================================
-        # GET PREVIOUS LEVEL
-        # =================================================
-
-        previous = stack[-1]
-
-        previous_type = previous.get(
-            "type"
+        # Parent is the YEAR folder
+        await show_album_list(
+            query.message.chat,
+            parent_id,
+            0,
+            query.message
         )
 
-        # =================================================
-        # PREVIOUS = YEARS
-        # =================================================
+    except Exception as e:
 
-        if previous_type == "years":
+        print(
+            "BACK ALBUM ERROR:",
+            repr(e)
+        )
 
-            page = previous.get(
-                "page",
-                0
+        await query.message.chat.send_message(
+            "❌ <b>Album list തുറക്കാൻ കഴിഞ്ഞില്ല.</b>\n\n"
+            + html.escape(
+                str(e)
+            ),
+            parse_mode="HTML"
+        )
+
+
+# =========================================================
+# BACK TO YEARS
+# =========================================================
+
+async def backyear_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    query = update.callback_query
+
+    await query.answer()
+
+    try:
+
+        # This callback receives YEAR ID
+        year_id = (
+            query.data.split(
+                ":",
+                1
+            )[1]
+        )
+
+        # Get current page of years
+        years = get_year_folders()
+
+        year_index = None
+
+        for index, year in enumerate(years):
+
+            if year["id"] == year_id:
+
+                year_index = index
+
+                break
+
+        if year_index is None:
+
+            page = 0
+
+        else:
+
+            page = (
+                year_index
+                // YEARS_PER_PAGE
             )
 
-            await show_years_from_callback(
-                query,
-                context,
-                page
-            )
+        try:
 
-            return
+            await query.message.delete()
 
-        # =================================================
-        # PREVIOUS = YEAR
-        # =================================================
+        except Exception:
 
-        if previous_type == "year":
+            pass
 
-            folder_id = previous.get(
-                "id"
-            )
-
-            page = previous.get(
-                "page",
-                0
-            )
-
-            year_name = previous.get(
-                "name",
-                get_folder_name(
-                    folder_id
+        await query.message.chat.send_message(
+            "🎵 <b>A2Z Malayalam Songs</b>\n\n"
+            "📂 <b>Select a year:</b>",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(
+                build_year_keyboard(
+                    page
                 )
             )
-
-            await render_year(
-                query,
-                context,
-                folder_id,
-                year_name,
-                page
-            )
-
-            return
-
-        # =================================================
-        # PREVIOUS = FOLDER
-        # =================================================
-
-        if previous_type == "folder":
-
-            folder_id = previous.get(
-                "id"
-            )
-
-            await render_folder(
-                query,
-                context,
-                folder_id
-            )
-
-            return
-
-        # =================================================
-        # SAFETY FALLBACK
-        # =================================================
-
-        reset_navigation(
-            context,
-            0
-        )
-
-        await show_years_from_callback(
-            query,
-            context,
-            0
         )
 
     except Exception as e:
 
         print(
-            "BACK ERROR:",
+            "BACK YEAR ERROR:",
             repr(e)
-        )
-
-        await query.message.chat.send_message(
-            "❌ <b>Back പോകാൻ കഴിഞ്ഞില്ല.</b>\n\n"
-            + html.escape(
-                str(e)
-            ),
-            parse_mode="HTML"
-        )
-
-
-# =========================================================
-# SEARCH FOLDER
-#
-# Search result folder opened.
-# =========================================================
-
-async def search_folder_callback(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    query = update.callback_query
-
-    await query.answer()
-
-    try:
-
-        folder_id = query.data.split(
-            ":",
-            1
-        )[1]
-
-        # Search result starts a fresh navigation.
-        reset_navigation(
-            context,
-            0
-        )
-
-        push_navigation(
-            context,
-            {
-                "type": "folder",
-                "id": folder_id
-            }
-        )
-
-        await render_folder(
-            query,
-            context,
-            folder_id
-        )
-
-    except Exception as e:
-
-        print(
-            "SEARCH FOLDER ERROR:",
-            repr(e)
-        )
-
-        await query.message.chat.send_message(
-            "❌ <b>Folder തുറക്കാൻ കഴിഞ്ഞില്ല.</b>\n\n"
-            + html.escape(
-                str(e)
-            ),
-            parse_mode="HTML"
         )
 
 
@@ -2315,11 +2210,6 @@ async def home_callback(
         "request_mode"
     ] = False
 
-    reset_navigation(
-        context,
-        0
-    )
-
     try:
 
         await query.message.delete()
@@ -2328,9 +2218,13 @@ async def home_callback(
 
         pass
 
-    await send_years(
-        query.message.chat,
-        0
+    await query.message.chat.send_message(
+        "🎵 <b>A2Z Malayalam Songs</b>\n\n"
+        "📂 <b>Select a year:</b>",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(
+            build_year_keyboard(0)
+        )
     )
 
 
@@ -2403,7 +2297,7 @@ async def file_callback(
             repr(e)
         )
 
-        await query.message.chat.send_message(
+        await query.message.reply_text(
             "❌ <b>Download failed</b>\n\n"
             + html.escape(
                 str(e)
@@ -2432,7 +2326,7 @@ async def file_callback(
 
 
 # =========================================================
-# COLLECT LATEST
+# LATEST SONGS
 # =========================================================
 
 def collect_latest_files(
@@ -2498,6 +2392,12 @@ def collect_latest_files(
 
                 continue
 
+            if not lower.endswith(
+                SONG_EXTENSIONS
+            ):
+
+                continue
+
             results.append(
                 item
             )
@@ -2559,8 +2459,7 @@ async def latest_command(
                     + item["name"]
                     + " ⬇️",
                     callback_data=(
-                        f"file:"
-                        f"{item['id']}"
+                        f"file:{item['id']}"
                     )
                 )
             ])
@@ -2661,7 +2560,10 @@ def main():
 
     app.add_handler(
         MessageHandler(
-            filters.REPLY
+            filters.Chat(
+                chat_id=ADMIN_CHAT_ID
+            )
+            & filters.REPLY
             & ~filters.COMMAND,
             admin_reply_handler
         )
@@ -2680,7 +2582,7 @@ def main():
     )
 
     # =====================================================
-    # YEAR PAGINATION
+    # YEAR PAGE
     # =====================================================
 
     app.add_handler(
@@ -2692,53 +2594,56 @@ def main():
 
     # =====================================================
     # YEAR
-    #
-    # y:FOLDER_ID:PAGE
     # =====================================================
 
     app.add_handler(
         CallbackQueryHandler(
             year_callback,
-            pattern=r"^y:"
+            pattern=r"^year:"
         )
     )
 
     # =====================================================
-    # NORMAL FOLDER
-    #
-    # f:FOLDER_ID
-    #
-    # Works for unlimited sub-folders.
+    # ALBUM PAGE
     # =====================================================
 
     app.add_handler(
         CallbackQueryHandler(
-            folder_callback,
-            pattern=r"^f:"
+            albums_callback,
+            pattern=r"^albums:"
         )
     )
 
     # =====================================================
-    # SEARCH FOLDER
+    # ALBUM
     # =====================================================
 
     app.add_handler(
         CallbackQueryHandler(
-            search_folder_callback,
-            pattern=r"^searchfolder:"
+            album_callback,
+            pattern=r"^album:"
         )
     )
 
     # =====================================================
-    # BACK
-    #
-    # Dynamic navigation stack.
+    # BACK TO ALBUM LIST
     # =====================================================
 
     app.add_handler(
         CallbackQueryHandler(
-            back_callback,
-            pattern=r"^back$"
+            backalbum_callback,
+            pattern=r"^backalbum:"
+        )
+    )
+
+    # =====================================================
+    # BACK TO YEARS
+    # =====================================================
+
+    app.add_handler(
+        CallbackQueryHandler(
+            backyear_callback,
+            pattern=r"^backyear:"
         )
     )
 
